@@ -100,6 +100,8 @@
   $('roomInput').value = localStorage.getItem('ably_room') || '';
 
   function connect(apiKey, room) {
+    apiKey = apiKey.trim();
+    room = room.trim();
     localStorage.setItem('ably_key', apiKey);
     localStorage.setItem('ably_room', room);
     ably = new Ably.Realtime(apiKey);
