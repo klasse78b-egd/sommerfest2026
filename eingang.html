@@ -226,6 +226,8 @@
   }
 
   function connect(apiKey, room) {
+    apiKey = apiKey.trim();
+    room = room.trim();
     localStorage.setItem('ably_key', apiKey);
     localStorage.setItem('ably_room', room);
     ably = new Ably.Realtime(apiKey);
@@ -279,10 +281,36 @@
       broadcastState();
     });
 
-    // QR-Code generieren, der Key + Raum enthält
-    const qrData = JSON.stringify({ k: apiKey, r: room });
+    // Key + Raum merken, damit der QR-Code jederzeit (neu) erzeugt werden kann
+    currentApiKey = apiKey;
+    currentRoom = room;
+    generateQr();
+  }
+
+  // --- QR-Code robust erzeugen ---
+  let currentApiKey = '';
+  let currentRoom = '';
+
+  function generateQr() {
+    if (!currentApiKey || !currentRoom) return;
+    const qrData = JSON.stringify({ k: currentApiKey, r: currentRoom });
+
+    // Falls das QRCode-Skript (CDN) noch nicht geladen ist, kurz warten und erneut versuchen,
+    // statt den Fehler stillschweigend zu verschlucken.
+    if (typeof QRCode === 'undefined') {
+      $('qrOverlay').querySelector('p').textContent = 'QR-Code lädt...';
+      setTimeout(generateQr, 300);
+      return;
+    }
     QRCode.toCanvas($('qrCanvas'), qrData, { width: 280, margin: 2 }, (err) => {
-      if (err) console.error(err);
+      if (err) {
+        console.error(err);
+        $('qrOverlay').querySelector('p').textContent =
+          'QR-Code konnte nicht erzeugt werden. Bitte Seite neu laden.';
+      } else {
+        $('qrOverlay').querySelector('p').textContent =
+          'Mit dem Handy scannen, um Eingang/Ausgang-Klicker automatisch einzurichten.';
+      }
     });
   }
 
@@ -348,6 +376,7 @@
   };
   $('qrToggleBtn').onclick = () => {
     $('qrOverlay').style.display = 'flex';
+    generateQr();
   };
   $('closeQr').onclick = () => {
     $('qrOverlay').style.display = 'none';
