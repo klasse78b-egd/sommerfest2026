@@ -186,6 +186,13 @@
       <input id="codeInput" type="password" inputmode="numeric" placeholder="Code eingeben">
       <div id="settingsMsg"></div>
       <div id="unlockedFields" style="display:none; flex-direction:column; gap:14px;">
+        <label>Ably API Key</label>
+        <input id="settingsApiKeyInput" type="text" placeholder="Ably API Key">
+        <label>Raum-Name</label>
+        <input id="settingsRoomInput" type="text" placeholder="Raum-Name (z.B. saal1)">
+        <div class="settingsRow">
+          <button id="changeAblyKey" style="background:#8A2E1F; color:#fff;">Ably-Key wechseln &amp; neu verbinden</button>
+        </div>
         <label>Zähler manuell korrigieren</label>
         <div class="settingsRow">
           <button id="manualMinus">−1</button>
@@ -430,11 +437,53 @@
   $('codeInput').addEventListener('input', () => {
     if ($('codeInput').value === accessCode) {
       $('unlockedFields').style.display = 'flex';
+      $('settingsApiKeyInput').value = localStorage.getItem('ably_key') || '';
+      $('settingsRoomInput').value = localStorage.getItem('ably_room') || '';
       $('settingsMsg').textContent = 'Entsperrt.';
     } else {
       $('unlockedFields').style.display = 'none';
     }
   });
+
+  // --- Ably-Key wechseln ---
+  $('changeAblyKey').onclick = async () => {
+    const newKey = $('settingsApiKeyInput').value.trim();
+    const newRoom = $('settingsRoomInput').value.trim();
+    if (!newKey || !newRoom) {
+      $('settingsMsg').textContent = 'Bitte Key und Raum-Name eingeben.';
+      return;
+    }
+    $('settingsMsg').textContent = 'Verbinde mit neuem Key...';
+
+    if (ably) {
+      try { channel.unsubscribe(); } catch (e) {}
+      try { ably.close(); } catch (e) {}
+    }
+
+    try {
+      await connect(newKey, newRoom);
+    } catch (e) {
+      $('settingsMsg').textContent = 'Verbindung fehlgeschlagen. Bitte Key/Raum prüfen.';
+      return;
+    }
+
+    const saved = JSON.parse(localStorage.getItem('settings_' + newRoom) || '{}');
+    if (saved.maxCapacity) maxCapacity = saved.maxCapacity;
+    if (saved.accessCode) accessCode = saved.accessCode;
+    if (typeof saved.count === 'number') count = saved.count;
+
+    channel.subscribe('state', (msg) => {
+      if (typeof msg.data.count === 'number') count = msg.data.count;
+      if (typeof msg.data.maxCapacity === 'number') maxCapacity = msg.data.maxCapacity;
+      if (msg.data.accessCode) accessCode = msg.data.accessCode;
+    });
+    channel.publish('request-state', {});
+    ably.connection.on('connected', () => {
+      channel.publish('request-state', {});
+    });
+
+    $('settingsMsg').textContent = 'Ably-Key gewechselt und neu verbunden.';
+  };
 
   // --- Manuelle Korrektur (Klickfehler beheben) ---
   $('manualMinus').onclick = () => {
