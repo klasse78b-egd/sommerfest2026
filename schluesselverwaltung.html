@@ -316,6 +316,7 @@
       if (pinInput.value === item.code) {
         item.locked = false;
         item.code = '';
+        item.name = '';
         saveKeys();
         render();
       } else {
