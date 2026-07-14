@@ -45,18 +45,9 @@
     border-radius: 12px; cursor: pointer; background: var(--crema); color: var(--espresso);
   }
   #setupStatus { color: var(--steam); font-size: 0.85rem; text-align: center; min-height: 1.2em; }
-  #scanBtn {
+  #toggleManualBtn {
     padding: 16px; font-size: 1.1rem; font-weight: 700; border: none;
     border-radius: 12px; cursor: pointer; background: var(--roast); color: var(--foam);
-  }
-  #scanOverlay {
-    position: fixed; inset: 0; background: var(--espresso); z-index: 40;
-    display: none; align-items: center; justify-content: center; flex-direction: column;
-  }
-  #scanOverlay video { width: 100%; max-width: 480px; border-radius: 12px; }
-  #scanOverlay button {
-    margin-top: 16px; padding: 12px 24px; border-radius: 10px; border: none;
-    background: var(--steam); color: var(--espresso); font-weight: 700; cursor: pointer;
   }
   #scanHint { color: var(--foam); margin-top: 12px; font-size: 0.9rem; }
 
@@ -156,19 +147,18 @@
   <div id="setup">
     <div id="setupBox">
       <h2>Ausgang einrichten</h2>
-      <input id="apiKeyInput" type="text" placeholder="Ably API Key">
-      <input id="roomInput" type="text" placeholder="Raum-Name (z.B. saal1)">
-      <button id="scanBtn">📷 QR-Code scannen</button>
-      <button id="connectBtn">Manuell verbinden</button>
+      <video id="scanVideo" playsinline autoplay muted style="width:100%;border-radius:12px;"></video>
+      <div id="scanHint" style="color:#aaa;font-size:0.85rem;text-align:center;">Kamera wird gestartet...</div>
+      <button id="toggleManualBtn" style="background:#555;">✏️ Manuell eingeben</button>
+      <div id="manualFields" style="display:none; flex-direction:column; gap:14px;">
+        <input id="apiKeyInput" type="text" placeholder="Ably API Key">
+        <input id="roomInput" type="text" placeholder="Raum-Name (z.B. saal1)">
+        <button id="connectBtn">Verbinden</button>
+      </div>
       <div id="setupStatus"></div>
     </div>
   </div>
 
-  <div id="scanOverlay">
-    <video id="scanVideo" playsinline autoplay muted></video>
-    <div id="scanHint">Auf den QR-Code am Eingang-Bildschirm richten...</div>
-    <button id="cancelScan">Abbrechen</button>
-  </div>
 
   <div id="clickScreen">
     <button id="clickBtn">RAUS</button>
@@ -223,6 +213,8 @@
   $('roomInput').value = localStorage.getItem('ably_room') || '';
 
   function connect(apiKey, room) {
+    apiKey = apiKey.trim();
+    room = room.trim();
     localStorage.setItem('ably_key', apiKey);
     localStorage.setItem('ably_room', room);
     ably = new Ably.Realtime(apiKey);
@@ -281,12 +273,24 @@
     }
   })();
 
+  $('toggleManualBtn').onclick = () => {
+    const manualVisible = $('manualFields').style.display === 'flex';
+    if (manualVisible) {
+      $('manualFields').style.display = 'none';
+      $('toggleManualBtn').textContent = '✏️ Manuell eingeben';
+      startScan();
+    } else {
+      stopScan();
+      $('manualFields').style.display = 'flex';
+      $('toggleManualBtn').textContent = '📷 QR-Code scannen';
+    }
+  };
+
   // --- QR-Scan ---
   let scanStream = null;
   let scanRAF = null;
 
   async function startScan() {
-    $('scanOverlay').style.display = 'flex';
     try {
       scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     } catch (e) {
@@ -295,10 +299,12 @@
     }
     const video = $('scanVideo');
     video.srcObject = scanStream;
+    $('scanHint').textContent = 'Auf den QR-Code am Eingang-Bildschirm richten...';
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
 
     function tick() {
+      if (!scanStream) return;
       if (video.readyState === video.HAVE_ENOUGH_DATA) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -325,12 +331,13 @@
 
   function stopScan() {
     if (scanRAF) cancelAnimationFrame(scanRAF);
-    if (scanStream) scanStream.getTracks().forEach(t => t.stop());
-    $('scanOverlay').style.display = 'none';
+    if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
   }
 
-  $('scanBtn').onclick = startScan;
-  $('cancelScan').onclick = stopScan;
+  // Kamera-Scan nur starten, wenn keine gespeicherte Verbindung existiert
+  if (!(localStorage.getItem('ably_key') && localStorage.getItem('ably_room'))) {
+    startScan();
+  }
 
   // --- Sound-Feedback (kein Audio-File nötig, per Web Audio API) ---
   let audioCtx = null;
