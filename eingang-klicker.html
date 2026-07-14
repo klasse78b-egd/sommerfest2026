@@ -68,6 +68,11 @@
     position: fixed; inset: 0; background: var(--foam); opacity: 0;
     pointer-events: none; transition: opacity 0.15s ease;
   }
+  #changeKeyBtn {
+    position: fixed; top: 12px; right: 12px; z-index: 5;
+    width: 44px; height: 44px; border-radius: 50%; border: none;
+    background: rgba(28,16,8,0.45); color: var(--foam); font-size: 1.2rem; cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -89,6 +94,7 @@
 
   <div id="clickScreen">
     <button id="clickBtn">REIN</button>
+    <button id="changeKeyBtn" title="Ably-Key wechseln">⚙️</button>
   </div>
   <div id="flash"></div>
 
@@ -231,6 +237,27 @@
     });
 
     setTimeout(() => { clickPending = false; }, 4000);
+  };
+
+  // --- Ably-Key wechseln ---
+  $('changeKeyBtn').onclick = () => {
+    if (ably) {
+      try { channel.unsubscribe(); } catch (e) {}
+      try { ably.close(); } catch (e) {}
+    }
+    ably = null;
+    channel = null;
+
+    $('clickScreen').style.display = 'none';
+    $('setup').style.display = 'flex';
+    $('setupStatus').textContent = 'Neuen Ably-Key eingeben oder QR-Code scannen.';
+    $('apiKeyInput').value = localStorage.getItem('ably_key') || '';
+    $('roomInput').value = localStorage.getItem('ably_room') || '';
+
+    // Manuelle Eingabe direkt anzeigen, da der Nutzer aktiv einen Wechsel wünscht
+    $('manualFields').style.display = 'flex';
+    $('toggleManualBtn').textContent = '📷 QR-Code scannen';
+    stopScan();
   };
 </script>
 </body>
