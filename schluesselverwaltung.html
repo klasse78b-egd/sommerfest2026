@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Schlüsselverwaltung</title>
+<script src="https://cdn.ably.io/lib/ably.min-1.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
 <style>
   * { box-sizing: border-box; }
@@ -36,6 +37,10 @@
     width: 42px; height: 42px; border-radius: 50%;
     background: var(--crema); color: var(--espresso); border: none;
     font-size: 1.5rem; font-weight: 700; cursor: pointer; line-height: 1;
+  }
+  #syncStatus {
+    font-size: 0.75rem; color: var(--steam); text-align: center;
+    padding: 6px 12px; min-height: 1.2em;
   }
 
   #app { max-width: 560px; margin: 0 auto; padding: 20px 16px 60px; }
@@ -94,6 +99,7 @@
     <h1>🔑 Schlüsselverwaltung</h1>
     <button id="topAddBtn">+</button>
   </div>
+  <div id="syncStatus">Verbinde...</div>
 
   <div id="app">
     <div id="cardList"></div>
@@ -143,6 +149,55 @@
   const $ = id => document.getElementById(id);
   let keys = {}; // { id: { name, key, code, locked } }
 
+  // --- Sync über Ably: alle Geräte teilen sich denselben Kanal ---
+  // WICHTIG: Diesen Platzhalter durch einen echten Ably API-Key ersetzen,
+  // damit die Schlüsselverwaltung geräteübergreifend synchronisiert.
+  const SYNC_ABLY_KEY = 'DEIN_ABLY_API_KEY_HIER_EINFÜGEN';
+  const SYNC_ROOM = 'schluesselverwaltung';
+
+  let syncAbly, syncChannel;
+  let syncReady = false;
+  let applyingRemoteUpdate = false;
+
+  function setSyncStatus(text) {
+    $('syncStatus').textContent = text;
+  }
+
+  function initSync() {
+    if (!SYNC_ABLY_KEY || SYNC_ABLY_KEY.indexOf('HIER_EINFÜGEN') !== -1) {
+      setSyncStatus('⚠️ Sync nicht eingerichtet – Keys bleiben nur auf diesem Gerät.');
+      return;
+    }
+    setSyncStatus('Verbinde...');
+    syncAbly = new Ably.Realtime(SYNC_ABLY_KEY);
+    syncChannel = syncAbly.channels.get('keyvault-' + SYNC_ROOM);
+
+    syncAbly.connection.on('connected', () => {
+      syncReady = true;
+      setSyncStatus('✅ Synchronisiert');
+      // Beim Verbinden aktuellen Stand anfragen, damit dieses Gerät auf den neuesten Stand kommt
+      syncChannel.publish('request-state', {});
+    });
+    syncAbly.connection.on('disconnected', () => setSyncStatus('⚠️ Verbindung unterbrochen...'));
+    syncAbly.connection.on('failed', () => setSyncStatus('❌ Sync fehlgeschlagen – bitte Key prüfen.'));
+
+    // Ein anderes Gerät hat den kompletten Datensatz aktualisiert
+    syncChannel.subscribe('keys-update', (msg) => {
+      applyingRemoteUpdate = true;
+      keys = msg.data.keys || {};
+      localStorage.setItem('keyvault_keys', JSON.stringify(keys));
+      render();
+      applyingRemoteUpdate = false;
+    });
+
+    // Ein neu verbundenes Gerät fragt nach dem aktuellen Stand
+    syncChannel.subscribe('request-state', () => {
+      if (syncReady) {
+        syncChannel.publish('keys-update', { keys });
+      }
+    });
+  }
+
   function loadKeys() {
     try {
       keys = JSON.parse(localStorage.getItem('keyvault_keys') || '{}');
@@ -152,6 +207,11 @@
   }
   function saveKeys() {
     localStorage.setItem('keyvault_keys', JSON.stringify(keys));
+    // Änderung an alle anderen Geräte senden, außer wir wenden gerade selbst
+    // ein von einem anderen Gerät empfangenes Update an.
+    if (syncReady && syncChannel && !applyingRemoteUpdate) {
+      syncChannel.publish('keys-update', { keys });
+    }
   }
 
   function copyToClipboard(text) {
@@ -340,6 +400,7 @@
 
   loadKeys();
   render();
+  initSync();
 </script>
 </body>
 </html>
