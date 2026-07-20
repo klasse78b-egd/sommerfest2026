@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ausgang – Personenzähler</title>
+<script src="https://cdn.ably.io/lib/ably.min-1.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; }
+
+  :root {
+    --espresso:  #1C1008;
+    --roast:     #3B1F0A;
+    --crema:     #C8862A;
+    --foam:      #F5ECD7;
+    --milk:      #FBF6EE;
+    --steam:     #E8D9BE;
+  }
+
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: 'Inter', sans-serif;
+    background: var(--espresso); color: var(--foam);
+    overflow: hidden;
+  }
+
+  /* Steam-Animation (aus index.html übernommen) */
+  .steam-row {
+    display: flex;
+    justify-content: center;
+    gap: 18px;
+    margin-bottom: 20px;
+  }
+  .steam {
+    width: 3px;
+    height: 32px;
+    background: linear-gradient(to top, transparent, rgba(245,236,215,.5));
+    border-radius: 2px;
+    animation: rise 2.4s ease-in-out infinite;
+  }
+  .steam:nth-child(2) { animation-delay: .6s; height: 24px; }
+  .steam:nth-child(3) { animation-delay: 1.2s; height: 28px; }
+  @keyframes rise {
+    0%   { transform: translateY(0)   scaleX(1);   opacity: .6; }
+    50%  { transform: translateY(-12px) scaleX(1.4); opacity: .3; }
+    100% { transform: translateY(-24px) scaleX(.8); opacity: 0;  }
+  }
+
+  #setup {
+    position: fixed; inset: 0;
+    background: var(--espresso);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 20;
+  }
+  #setupBox {
+    width: 90%; max-width: 420px;
+    background: var(--roast);
+    border: 1px solid var(--steam);
+    border-radius: 14px;
+    padding: 32px 28px 28px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  #setupBox h2 { font-family: 'Playfair Display', serif; margin: 0 0 4px 0; text-align: center; letter-spacing: .02em; }
+  #setupBox input {
+    padding: 14px; font-size: 1rem; border-radius: 10px; border: 1px solid var(--steam); outline: none;
+    background: var(--milk); color: var(--espresso);
+  }
+  #setupBox button {
+    padding: 16px; font-size: 1.1rem; font-weight: 700; border: none;
+    border-radius: 12px; cursor: pointer; background: var(--crema); color: var(--espresso);
+  }
+  #setupStatus { color: var(--steam); font-size: 0.85rem; text-align: center; min-height: 1.2em; }
+  #toggleManualBtn {
+    padding: 16px; font-size: 1.1rem; font-weight: 700; border: none;
+    border-radius: 12px; cursor: pointer; background: var(--roast); color: var(--foam);
+  }
+  #scanHint { color: var(--foam); margin-top: 12px; font-size: 0.9rem; }
+
+  #clickScreen {
+    display: none;
+    width: 100%; height: 100vh;
+    align-items: center; justify-content: center;
+  }
+  #clickBtn {
+    width: 90vw; height: 90vh;
+    font-family: 'Playfair Display', serif;
+    font-size: 4rem; font-weight: 700;
+    border: none; border-radius: 24px;
+    cursor: pointer; background: #8A2E1F; color: var(--foam);
+    transition: transform 0.1s ease;
+  }
+  #clickBtn:active { transform: scale(0.96); background: #6E2418; }
+  #clickBtn:disabled { opacity: 0.6; cursor: default; }
+  #flash {
+    position: fixed; inset: 0; background: var(--foam); opacity: 0;
+    pointer-events: none; transition: opacity 0.15s ease;
+  }
+
+  /* Erfolgs-Meldung nach dem Klick */
+  #successScreen {
+    display: none;
+    position: fixed; inset: 0;
+    width: 100%; height: 100vh;
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px;
+    background: #2E6B1F; color: var(--foam);
+    z-index: 15;
+  }
+  #successScreen .check {
+    font-size: 5rem; line-height: 1;
+  }
+  #successScreen .msg {
+    font-family: 'Playfair Display', serif;
+    font-size: 2rem; font-weight: 700;
+  }
+
+  /* Fehler-Meldung, wenn Klick nicht ankam */
+  #errorScreen {
+    display: none;
+    position: fixed; inset: 0;
+    width: 100%; height: 100vh;
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px;
+    background: #8A2E1F; color: var(--foam);
+    z-index: 15;
+  }
+  #errorScreen .msg {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.6rem; font-weight: 700; text-align: center; padding: 0 24px;
+  }
+  #errorScreen button {
+    padding: 14px 28px; border-radius: 12px; border: none;
+    font-weight: 700; cursor: pointer; background: var(--steam); color: var(--espresso);
+  }
+
+  /* Zahnrad Button */
+  #gearBtn {
+    position: fixed; bottom: 16px; right: 16px;
+    width: 52px; height: 52px; border-radius: 50%;
+    background: rgba(28,16,8,0.45); color: var(--foam); border: none;
+    font-size: 1.4rem; cursor: pointer; z-index: 10;
+  }
+
+  /* Einstellungen-Dialog */
+  #settingsOverlay {
+    position: fixed; inset: 0; background: rgba(28,16,8,0.8);
+    display: none; align-items: center; justify-content: center; z-index: 30;
+    padding: 20px 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #settingsBox {
+    background: var(--roast); border: 1px solid var(--steam); border-radius: 14px; padding: 28px 24px;
+    width: 90%; max-width: 380px; color: var(--foam);
+    display: flex; flex-direction: column; gap: 14px;
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: auto;
+  }
+  #settingsBox h3 { font-family: 'Playfair Display', serif; margin: 0; letter-spacing: .02em; }
+  #settingsBox label { font-size: 0.85rem; color: var(--steam); margin-bottom: -8px; }
+  #settingsBox input {
+    padding: 12px; font-size: 1rem; border-radius: 8px; border: 1px solid var(--steam); outline: none;
+    background: var(--milk); color: var(--espresso);
+  }
+  .settingsRow { display: flex; gap: 10px; }
+  .settingsRow button {
+    flex: 1; padding: 12px; border-radius: 8px; border: none; font-weight: 700; cursor: pointer;
+  }
+  #closeSettings { background: var(--steam); color: var(--espresso); }
+  #manualMinus, #manualPlus { background: var(--crema); color: var(--espresso); }
+  #manualSetCount { background: #2E6B1F; color: #fff; }
+  #settingsMsg { font-size: 0.8rem; color: var(--crema); min-height: 1.2em; }
+</style>
+</head>
+<body>
+
+  <div id="setup">
+    <div id="setupBox">
+      <div class="steam-row">
+        <div class="steam"></div>
+        <div class="steam"></div>
+        <div class="steam"></div>
+      </div>
+      <h2>Ausgang einrichten</h2>
+      <video id="scanVideo" playsinline autoplay muted style="width:100%;border-radius:12px;"></video>
+      <div id="scanHint" style="color:#aaa;font-size:0.85rem;text-align:center;">Kamera wird gestartet...</div>
+      <button id="toggleManualBtn" style="background:#555;">✏️ Manuell eingeben</button>
+      <div id="manualFields" style="display:none; flex-direction:column; gap:14px;">
+        <input id="apiKeyInput" type="text" placeholder="Ably API Key">
+        <input id="roomInput" type="text" placeholder="Raum-Name (z.B. saal1)">
+        <button id="connectBtn">Verbinden</button>
+      </div>
+      <div id="setupStatus"></div>
+    </div>
+  </div>
+
+
+  <div id="clickScreen">
+    <button id="clickBtn">RAUS</button>
+  </div>
+
+  <div id="successScreen">
+    <div class="check">✓</div>
+    <div class="msg">Erfolgreich</div>
+  </div>
+
+  <div id="errorScreen">
+    <div class="msg">Verbindung unterbrochen.<br>Bitte erneut versuchen.</div>
+    <button id="errorRetry">Erneut versuchen</button>
+  </div>
+
+  <div id="flash"></div>
+
+  <button id="gearBtn">⚙️</button>
+
+  <!-- Einstellungen -->
+  <div id="settingsOverlay">
+    <div id="settingsBox">
+      <h3>Einstellungen</h3>
+      <label>Zugangscode</label>
+      <input id="codeInput" type="password" inputmode="numeric" placeholder="Code eingeben">
+      <div id="settingsMsg"></div>
+      <div id="unlockedFields" style="display:none; flex-direction:column; gap:14px;">
+        <label>Ably API Key</label>
+        <input id="settingsApiKeyInput" type="text" placeholder="Ably API Key">
+        <label>Raum-Name</label>
+        <input id="settingsRoomInput" type="text" placeholder="Raum-Name (z.B. saal1)">
+        <div class="settingsRow">
+          <button id="changeAblyKey" style="background:#8A2E1F; color:#fff;">Ably-Key wechseln &amp; neu verbinden</button>
+        </div>
+        <label>Anzeigedauer „Erfolgreich“ (Sekunden)</label>
+        <div class="settingsRow">
+          <input id="successDurationInput" type="number" min="1" step="1" placeholder="z.B. 5" style="flex:1;">
+          <button id="successDurationSet" style="flex:0 0 auto; background:#2E6B1F; color:#fff;">Setzen</button>
+        </div>
+        <div class="settingsRow" style="align-items:center; gap:8px;">
+          <input id="successScreenEnabled" type="checkbox" style="width:20px; height:20px; flex:0 0 auto;">
+          <label style="margin:0; flex:1;">„Erfolgreich“-Meldung anzeigen</label>
+        </div>
+        <label>Zähler manuell korrigieren</label>
+        <div class="settingsRow">
+          <button id="manualMinus">−1</button>
+          <button id="manualPlus">+1</button>
+        </div>
+        <input id="manualCountInput" type="number" min="0" placeholder="Wert direkt setzen">
+        <div class="settingsRow">
+          <button id="manualSetCount">Übernehmen</button>
+        </div>
+        <div class="settingsRow">
+          <button id="closeSettings">Schließen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  let ably, channel;
+  let count = 0;
+  let maxCapacity = 50;
+  let accessCode = '1234';
+  let successDuration = 5; // Sekunden
+  let successScreenEnabled = true;
+
+  $('apiKeyInput').value = localStorage.getItem('ably_key') || '';
+  $('roomInput').value = localStorage.getItem('ably_room') || '';
+
+  function connect(apiKey, room) {
+    apiKey = apiKey.trim();
+    room = room.trim();
+    localStorage.setItem('ably_key', apiKey);
+    localStorage.setItem('ably_room', room);
+    ably = new Ably.Realtime(apiKey);
+    channel = ably.channels.get('personenzaehler-' + room);
+    return new Promise((resolve, reject) => {
+      ably.connection.on('connected', resolve);
+      ably.connection.on('failed', reject);
+    });
+  }
+
+  async function init() {
+    const apiKey = $('apiKeyInput').value.trim();
+    const room = $('roomInput').value.trim();
+    if (!apiKey || !room) {
+      $('setupStatus').textContent = 'Bitte API Key und Raum-Name eingeben.';
+      return;
+    }
+    $('setupStatus').textContent = 'Verbinde...';
+    try {
+      await connect(apiKey, room);
+    } catch (e) {
+      $('setupStatus').textContent = 'Verbindung fehlgeschlagen.';
+      return;
+    }
+    // Gespeicherte Einstellungen pro Raum laden (für Zugangscode)
+    const saved = JSON.parse(localStorage.getItem('settings_' + room) || '{}');
+    if (saved.maxCapacity) maxCapacity = saved.maxCapacity;
+    if (saved.accessCode) accessCode = saved.accessCode;
+    if (typeof saved.count === 'number') count = saved.count;
+    if (typeof saved.successDuration === 'number') successDuration = saved.successDuration;
+    if (typeof saved.successScreenEnabled === 'boolean') successScreenEnabled = saved.successScreenEnabled;
+
+    channel.subscribe('state', (msg) => {
+      if (typeof msg.data.count === 'number') count = msg.data.count;
+      if (typeof msg.data.maxCapacity === 'number') maxCapacity = msg.data.maxCapacity;
+      if (msg.data.accessCode) accessCode = msg.data.accessCode;
+    });
+    channel.publish('request-state', {});
+
+    // Bei Wiederverbindung (z.B. nach Netzwerkaussetzer) den Stand erneut anfragen
+    ably.connection.on('connected', () => {
+      channel.publish('request-state', {});
+    });
+
+    $('setup').style.display = 'none';
+    $('clickScreen').style.display = 'flex';
+  }
+
+  $('connectBtn').onclick = init;
+
+  // --- Auto-Reconnect: wenn Key+Raum schon bekannt sind, direkt verbinden ---
+  (function autoConnect() {
+    const savedKey = localStorage.getItem('ably_key');
+    const savedRoom = localStorage.getItem('ably_room');
+    if (savedKey && savedRoom) {
+      $('setupStatus').textContent = 'Verbinde automatisch...';
+      init();
+    }
+  })();
+
+  $('toggleManualBtn').onclick = () => {
+    const manualVisible = $('manualFields').style.display === 'flex';
+    if (manualVisible) {
+      $('manualFields').style.display = 'none';
+      $('toggleManualBtn').textContent = '✏️ Manuell eingeben';
+      startScan();
+    } else {
+      stopScan();
+      $('manualFields').style.display = 'flex';
+      $('toggleManualBtn').textContent = '📷 QR-Code scannen';
+    }
+  };
+
+  // --- QR-Scan ---
+  let scanStream = null;
+  let scanRAF = null;
+
+  async function startScan() {
+    try {
+      scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    } catch (e) {
+      $('scanHint').textContent = 'Kamera-Zugriff nicht möglich. Bitte manuell eintragen.';
+      return;
+    }
+    const video = $('scanVideo');
+    video.srcObject = scanStream;
+    $('scanHint').textContent = 'Auf den QR-Code am Eingang-Bildschirm richten...';
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    function tick() {
+      if (!scanStream) return;
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        if (code) {
+          try {
+            const parsed = JSON.parse(code.data);
+            if (parsed.k && parsed.r) {
+              $('apiKeyInput').value = parsed.k;
+              $('roomInput').value = parsed.r;
+              stopScan();
+              init();
+              return;
+            }
+          } catch (e) { /* kein gültiger QR-Inhalt, weiter scannen */ }
+        }
+      }
+      scanRAF = requestAnimationFrame(tick);
+    }
+    scanRAF = requestAnimationFrame(tick);
+  }
+
+  function stopScan() {
+    if (scanRAF) cancelAnimationFrame(scanRAF);
+    if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+  }
+
+  // Kamera-Scan nur starten, wenn keine gespeicherte Verbindung existiert
+  if (!(localStorage.getItem('ably_key') && localStorage.getItem('ably_room'))) {
+    startScan();
+  }
+
+  // --- Sound-Feedback (kein Audio-File nötig, per Web Audio API) ---
+  let audioCtx = null;
+  function beep(freq = 880, duration = 150) {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration / 1000);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + duration / 1000);
+    } catch (e) { /* Audio evtl. blockiert, egal */ }
+  }
+
+  let clickPending = false;
+
+  function showSuccess() {
+    beep(880, 150);
+    if (!successScreenEnabled) {
+      $('clickScreen').style.display = 'flex';
+      return;
+    }
+    $('clickScreen').style.display = 'none';
+    $('successScreen').style.display = 'flex';
+    setTimeout(() => {
+      $('successScreen').style.display = 'none';
+      $('clickScreen').style.display = 'flex';
+    }, successDuration * 1000);
+  }
+
+  function showError() {
+    $('clickScreen').style.display = 'none';
+    $('errorScreen').style.display = 'flex';
+  }
+
+  function attemptClick() {
+    if (clickPending) return;
+    if (!channel || !ably || ably.connection.state !== 'connected') {
+      showError();
+      return;
+    }
+    clickPending = true;
+    $('clickBtn').disabled = true;
+
+    const flash = $('flash');
+    flash.style.opacity = '0.3';
+    setTimeout(() => flash.style.opacity = '0', 150);
+
+    // Publish mit Callback: erst bei echter Bestätigung durch Ably gilt der Klick als erfolgreich
+    channel.publish('decrement', {}, (err) => {
+      clickPending = false;
+      $('clickBtn').disabled = false;
+      if (err) {
+        showError();
+      } else {
+        showSuccess();
+      }
+    });
+
+    // Sicherheitsnetz: falls Ably nach 4s nicht antwortet, Fehler anzeigen statt ewig zu hängen
+    setTimeout(() => {
+      if (clickPending) {
+        clickPending = false;
+        $('clickBtn').disabled = false;
+        showError();
+      }
+    }, 4000);
+  }
+
+  $('clickBtn').onclick = attemptClick;
+
+  $('errorRetry').onclick = () => {
+    $('errorScreen').style.display = 'none';
+    $('clickScreen').style.display = 'flex';
+    attemptClick();
+  };
+
+  // --- Einstellungen-Dialog ---
+  $('gearBtn').onclick = () => {
+    $('settingsOverlay').style.display = 'flex';
+    $('codeInput').value = '';
+    $('settingsMsg').textContent = '';
+    $('unlockedFields').style.display = 'none';
+    $('successDurationInput').value = successDuration;
+    $('successScreenEnabled').checked = successScreenEnabled;
+    if (channel) channel.publish('request-state', {});
+  };
+  $('closeSettings').onclick = () => {
+    $('settingsOverlay').style.display = 'none';
+  };
+  $('codeInput').addEventListener('input', () => {
+    if ($('codeInput').value === accessCode) {
+      $('unlockedFields').style.display = 'flex';
+      $('settingsMsg').textContent = 'Entsperrt.';
+    } else {
+      $('unlockedFields').style.display = 'none';
+    }
+  });
+
+  // --- Manuelle Korrektur (Klickfehler beheben) ---
+  $('manualMinus').onclick = () => {
+    if (!channel) return;
+    channel.publish('increment', {}); // increment am Eingang senkt den Zähler um 1
+    $('settingsMsg').textContent = 'Zähler um 1 verringert.';
+  };
+  $('manualPlus').onclick = () => {
+    if (!channel) return;
+    channel.publish('decrement', {}); // decrement am Eingang erhöht den Zähler um 1
+    $('settingsMsg').textContent = 'Zähler um 1 erhöht.';
+  };
+  $('successDurationSet').onclick = () => {
+    const val = parseFloat($('successDurationInput').value);
+    if (!isNaN(val) && val > 0) {
+      successDuration = val;
+      const room = localStorage.getItem('ably_room');
+      if (room) {
+        const key = 'settings_' + room;
+        const saved = JSON.parse(localStorage.getItem(key) || '{}');
+        saved.successDuration = successDuration;
+        localStorage.setItem(key, JSON.stringify(saved));
+      }
+      $('settingsMsg').textContent = 'Anzeigedauer auf ' + val + ' s gesetzt.';
+    } else {
+      $('settingsMsg').textContent = 'Bitte gültige Zahl eingeben.';
+    }
+  };
+  $('successScreenEnabled').addEventListener('change', () => {
+    successScreenEnabled = $('successScreenEnabled').checked;
+    const room = localStorage.getItem('ably_room');
+    if (room) {
+      const key = 'settings_' + room;
+      const saved = JSON.parse(localStorage.getItem(key) || '{}');
+      saved.successScreenEnabled = successScreenEnabled;
+      localStorage.setItem(key, JSON.stringify(saved));
+    }
+    $('settingsMsg').textContent = successScreenEnabled ? 'Meldung wird angezeigt.' : 'Meldung deaktiviert.';
+  });
+  $('manualSetCount').onclick = () => {
+    if (!channel) return;
+    const newCount = parseInt($('manualCountInput').value, 10);
+    if (!isNaN(newCount) && newCount >= 0) {
+      const diff = newCount - count;
+      const steps = Math.abs(diff);
+      const eventName = diff < 0 ? 'increment' : 'decrement';
+      for (let i = 0; i < steps; i++) {
+        channel.publish(eventName, {});
+      }
+      count = newCount;
+      $('settingsMsg').textContent = 'Zähler auf ' + newCount + ' gesetzt.';
+      $('manualCountInput').value = '';
+    } else {
+      $('settingsMsg').textContent = 'Bitte gültige Zahl eingeben.';
+    }
+  };
+</script>
+</body>
+</html>
